@@ -125,6 +125,13 @@ def get_exif_long_dir(longitude: float) -> str:
 def convert_gps_alt_to_exif_alt(altitude: float) -> str:
     return f"{int(altitude * 1000)}/1000"
 
+def utc_now_exif_datetime() -> str:
+    """
+    Return current UTC time in EXIF DateTime format.
+
+    EXIF uses the format "YYYY:MM:DD HH:MM:SS".
+    """
+    return strftime("%Y:%m:%d %H:%M:%S", gmtime())
 
 # -----------------------------------------------------------------------------
 # Public builders
@@ -178,6 +185,9 @@ def build_run_meta(
         Fully populated metadata container.
     """
     utc_stamp = strftime("%y%m%d %H:%M:%S", gmtime())
+
+    exif_utc = utc_now_exif_datetime()
+
     exp_s = str(round(shutter_speed / 1_000_000, 2))
 
     if gps_ok:
@@ -224,6 +234,11 @@ def build_run_meta(
         "GPS.GPSLatitude": exif_latitude,
         "GPS.GPSLatitudeRef": get_exif_lat_dir(latitude),
         "GPS.GPSAltitude": exif_altitude,
+
+        "EXIF.DateTimeOriginal": exif_utc,
+        "EXIF.DateTimeDigitized": exif_utc,
+        "IFD0.DateTime": exif_utc,
+
         "IFD0.Software": software,
         "IFD0.Artist": artist,
     }

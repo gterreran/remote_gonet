@@ -134,28 +134,82 @@ def _find_jpeg_eoi_offset(path: Path, *, chunk_size: int = 1_048_576) -> int | N
             window_start = max(0, window_end - chunk_size)
 
 
-def _extract_tail_after_eoi(path: Path) -> bytes:
+def _get_tail_start_offset(path: Path) -> tuple[int | None, int]:
     """
-    Extract all bytes after the final JPEG EOI marker.
-
-    Parameters
-    ----------
-    path : Path
-        Scratch JPG path produced by PiCamera.
-
-    Returns
-    -------
-    bytes
-        Tail bytes after EOI. If EOI not found, returns b"".
+    Return (tail_start_offset, tail_len). If no EOI found, (None, 0).
     """
     eoi_off = _find_jpeg_eoi_offset(path)
     if eoi_off is None:
-        return b""
+        return (None, 0)
 
-    tail_start = eoi_off + 2  # EOI is 2 bytes long
-    with path.open("rb") as f:
+    tail_start = eoi_off + 2  # EOI is 2 bytes
+    file_size = path.stat().st_size
+    tail_len = max(0, file_size - tail_start)
+    return (tail_start, tail_len)
+
+
+def _append_tail_streaming(
+    *,
+    scratch_path: Path,
+    out_full: Path,
+    tail_start: int,
+    logger: logging.Logger,
+    chunk_size: int = 1024 * 1024,
+) -> None:
+    """
+    Append bytes [tail_start:EOF] from scratch_path into out_full using streaming IO.
+    """
+    with scratch_path.open("rb") as fin, out_full.open("ab") as fout:
+        fin.seek(tail_start, 0)
+        while True:
+            buf = fin.read(chunk_size)
+            if not buf:
+                break
+            fout.write(buf)
+
+    logger.info("bayer tail: appended streaming bytes from offset=%d", tail_start)
+
+
+def _estimate_bayer_payload_len(
+    *,
+    scratch_path: Path,
+    tail_start: int,
+    tail_len: int,
+    logger: logging.Logger | None = None,
+) -> int:
+    """
+    Best-effort payload length estimation without reading whole tail.
+
+    Reads only a small prefix of the tail to find "BRCM" and assumes a 32k header.
+    If found and tail is long enough, payload_len = tail_len - (idx + 32768).
+    Else payload_len = tail_len.
+    """
+    if tail_len <= 0:
+        return 0
+
+    # Read just enough to cover: "BRCM" + potential header
+    probe_len = min(tail_len, 64 * 1024)
+    with scratch_path.open("rb") as f:
         f.seek(tail_start, 0)
-        return f.read()
+        probe = f.read(probe_len)
+
+    idx = probe.find(_BRCM_MAGIC)
+    if idx != -1:
+        hdr_end = idx + _BRCM_HEADER_LEN
+        if hdr_end < tail_len:
+            payload_len = tail_len - hdr_end
+            if logger is not None:
+                logger.info(
+                    "bayer tail: detected BRCM header (streaming) idx=%d header_len=%d payload_len=%d",
+                    idx,
+                    _BRCM_HEADER_LEN,
+                    payload_len,
+                )
+            return payload_len
+
+    if logger is not None:
+        logger.info("bayer tail: no usable BRCM header detected (streaming); payload_len=tail_len=%d", tail_len)
+    return tail_len
 
 
 def _extract_bayer_payload_from_tail(tail: bytes, *, logger: logging.Logger | None = None) -> bytes:
@@ -275,24 +329,29 @@ def process_one_image(
         background.save(str(out_full), "JPEG", exif=exif)
 
         # ---------------------------------------------------------------------
-        # 4) Extract Bayer tail (reliable) + append it to output
+        # 4) Find tail start + append tail to output (streaming, no big RAM)
         # ---------------------------------------------------------------------
-        tail = _extract_tail_after_eoi(scratch_path)
-        tail_len = len(tail)
+        tail_start, tail_len = _get_tail_start_offset(scratch_path)
 
-        if tail_len == 0:
+        if tail_start is None or tail_len == 0:
             logger.warning("bayer tail: none detected after JPEG EOI. file=%s", scratch_path)
-            payload = b""
             payload_len = 0
+            tail_len = 0
         else:
-            payload = _extract_bayer_payload_from_tail(tail, logger=logger)
-            payload_len = len(payload)
+            payload_len = _estimate_bayer_payload_len(
+                scratch_path=scratch_path,
+                tail_start=tail_start,
+                tail_len=tail_len,
+                logger=logger,
+            )
 
-            # Append the *entire tail* (not payload) to preserve full legacy artifact.
-            # This keeps compatibility with existing downstream tools that expect the
-            # original appended blob, including any header.
-            with out_full.open("ab") as fout:
-                fout.write(tail)
+            # Append full tail (header + payload) without reading into RAM
+            _append_tail_streaming(
+                scratch_path=scratch_path,
+                out_full=out_full,
+                tail_start=tail_start,
+                logger=logger,
+            )
 
         # ---------------------------------------------------------------------
         # 5) Thumbnail (use composited pixels already in memory)
