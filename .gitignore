@@ -1,0 +1,8 @@
+*.jpg
+*.json
+*.log
+
+transfer_benchmark.py
+
+__pycache__/
+*.pyc
