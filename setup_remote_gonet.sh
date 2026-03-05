@@ -80,15 +80,15 @@ sudo mkdir -p "${CAMERA_DIR}/utils"
 
 fetch "src/gonet4.py" "${CAMERA_DIR}/gonet4.py"
 
-fetch "src/utils/__init__.py"        "${CAMERA_DIR}/utils/__init__.py"
-fetch "src/utils/config.py"          "${CAMERA_DIR}/utils/config.py"
-fetch "src/utils/gps.py"             "${CAMERA_DIR}/utils/gps.py"
-fetch "src/utils/imaging_meta.py"    "${CAMERA_DIR}/utils/imaging_meta.py"
-fetch "src/utils/imaging_pipeline.py""${CAMERA_DIR}/utils/imaging_pipeline.py"
-fetch "src/utils/logging.py"         "${CAMERA_DIR}/utils/logging.py"
-fetch "src/utils/setup.py"           "${CAMERA_DIR}/utils/setup.py"
-fetch "src/utils/sun_gate.py"        "${CAMERA_DIR}/utils/sun_gate.py"
-fetch "src/utils/transfer.py"        "${CAMERA_DIR}/utils/transfer.py"
+fetch "src/utils/__init__.py"         "${CAMERA_DIR}/utils/__init__.py"
+fetch "src/utils/config.py"           "${CAMERA_DIR}/utils/config.py"
+fetch "src/utils/gps.py"              "${CAMERA_DIR}/utils/gps.py"
+fetch "src/utils/imaging_meta.py"     "${CAMERA_DIR}/utils/imaging_meta.py"
+fetch "src/utils/imaging_pipeline.py" "${CAMERA_DIR}/utils/imaging_pipeline.py"
+fetch "src/utils/logging.py"          "${CAMERA_DIR}/utils/logging.py"
+fetch "src/utils/setup.py"            "${CAMERA_DIR}/utils/setup.py"
+fetch "src/utils/sun_gate.py"         "${CAMERA_DIR}/utils/sun_gate.py"
+fetch "src/utils/transfer.py"         "${CAMERA_DIR}/utils/transfer.py"
 
 # Make sure pi owns the deployed python files (helps editing/debugging)
 sudo chown -R pi:pi "${CAMERA_DIR}" || true
