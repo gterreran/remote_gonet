@@ -22,7 +22,7 @@ IMAGES_DIR="${DUMP_DIR}/images"
 
 echo "==> Creating mount point: ${MOUNTPOINT}"
 sudo mkdir -p "${MOUNTPOINT}"
-sudo chown pi:pi "${MOUNTPOINT}" || true
+sudo chown pi:pi "${MOUNTPOINT}" 2>/dev/null || true
 
 echo "==> Installing auto-mount script: ${AUTOMOUNT_SCRIPT}"
 sudo tee "${AUTOMOUNT_SCRIPT}" >/dev/null <<'EOF'
