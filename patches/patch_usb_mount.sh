@@ -20,9 +20,33 @@ UDEV_RULE="/etc/udev/rules.d/99-gonet-usb.rules"
 DUMP_DIR="GONetDump"
 IMAGES_DIR="${DUMP_DIR}/images"
 
+# ----------------------------------------------------------------------
+# Helpers
+# ----------------------------------------------------------------------
+
+have_cmd() { command -v "$1" >/dev/null 2>&1; }
+
 echo "==> Creating mount point: ${MOUNTPOINT}"
 sudo mkdir -p "${MOUNTPOINT}"
 sudo chown pi:pi "${MOUNTPOINT}" 2>/dev/null || true
+
+# ----------------------------------------------------------------------
+# Ensure exFAT tooling exists (best effort, fail-open)
+# ----------------------------------------------------------------------
+if ! have_cmd mkfs.exfat; then
+  echo "==> mkfs.exfat not found; attempting to install exfatprogs (best effort)"
+  # Avoid apt-get update (often broken on buster images). Just attempt install.
+  # If it fails, we continue; auto-mount still works for already-formatted drives,
+  # but format-for-gonet will not work without mkfs.exfat.
+  sudo apt-get install -y exfatprogs >/dev/null 2>&1 || true
+fi
+
+# Some systems may still mount exFAT via fuse tools; optional best-effort install
+# (harmless if unavailable).
+if ! have_cmd mount.exfat && ! have_cmd mount.exfat-fuse; then
+  echo "==> exFAT mount helper not found; attempting to install exfat-fuse (best effort)"
+  sudo apt-get install -y exfat-fuse >/dev/null 2>&1 || true
+fi
 
 echo "==> Installing auto-mount script: ${AUTOMOUNT_SCRIPT}"
 sudo tee "${AUTOMOUNT_SCRIPT}" >/dev/null <<'EOF'
@@ -56,7 +80,7 @@ find_usb_partition() {
 # If already mounted, ensure dirs and marker
 # -----------------------------
 if mountpoint -q "$MOUNTPOINT"; then
-    mkdir -p "$MOUNTPOINT/$IMAGES_DIR" "$MOUNTPOINT/$THUMBS_DIR" || true
+    mkdir -p "$MOUNTPOINT/$IMAGES_DIR" || true
     touch "$MOUNTPOINT/$MARKER_FILE" || true
     exit 0
 fi
@@ -80,16 +104,16 @@ fi
 # For exfat/vfat: must set uid/gid/umask for pi to write.
 # For everything else: mount normally (best effort).
 if [ "$FSTYPE" = "exfat" ]; then
-    mount -t exfat -o rw,uid=pi,gid=pi,umask=0002 "$DEV" "$MOUNTPOINT"
+    mount -t exfat -o rw,uid=pi,gid=pi,umask=0002 "$DEV" "$MOUNTPOINT" || exit 0
 elif [ "$FSTYPE" = "vfat" ] || [ "$FSTYPE" = "msdos" ]; then
-    mount -t vfat -o rw,uid=pi,gid=pi,umask=0002,utf8=1,flush "$DEV" "$MOUNTPOINT"
+    mount -t vfat -o rw,uid=pi,gid=pi,umask=0002,utf8=1,flush "$DEV" "$MOUNTPOINT" || exit 0
 else
     # Unknown fs: try auto
     mount "$DEV" "$MOUNTPOINT" || exit 0
 fi
 
 # Create expected destination folders for gonet4 transfers
-mkdir -p "$MOUNTPOINT/$IMAGES_DIR" "$MOUNTPOINT/$THUMBS_DIR" || true
+mkdir -p "$MOUNTPOINT/$IMAGES_DIR" || true
 touch "$MOUNTPOINT/$MARKER_FILE" || true
 
 exit 0
@@ -169,6 +193,12 @@ LABEL="GONET_USB"
 DUMP_DIR="GONetDump"
 IMAGES_DIR="${DUMP_DIR}/images"
 
+if ! command -v mkfs.exfat >/dev/null 2>&1; then
+  echo "mkfs.exfat not found. Install exfatprogs first:"
+  echo "  sudo apt-get install -y exfatprogs"
+  exit 1
+fi
+
 echo "==> This will ERASE the USB drive currently inserted."
 echo "==> Continue? Type YES to proceed:"
 read -r ans
@@ -188,8 +218,7 @@ if [ -z "${DEV:-}" ]; then
   exit 1
 fi
 
-# Extra safety: refuse to format root disk-ish devices
-# We only allow /dev/sdXn, /dev/mmcblkXpY, /dev/nvme... partitions.
+# Extra safety: refuse to format unexpected device names
 if ! echo "$DEV" | grep -Eq '^/dev/(sd[a-z][0-9]+|mmcblk[0-9]+p[0-9]+|nvme[0-9]+n[0-9]+p[0-9]+)$'; then
   echo "Refusing to format unexpected device: $DEV"
   exit 1
@@ -202,7 +231,6 @@ if mountpoint -q "$MOUNTPOINT"; then
 fi
 
 echo "==> Formatting as exFAT (label=${LABEL})..."
-# Requires exfatprogs on modern Raspberry Pi OS
 sudo mkfs.exfat -n "$LABEL" "$DEV"
 
 echo "==> Mounting..."
@@ -210,7 +238,7 @@ sudo mkdir -p "$MOUNTPOINT"
 sudo mount -t exfat -o rw,uid=pi,gid=pi,umask=0002 "$DEV" "$MOUNTPOINT"
 
 echo "==> Creating expected folders..."
-mkdir -p "$MOUNTPOINT/$IMAGES_DIR" "$MOUNTPOINT/$THUMBS_DIR"
+mkdir -p "$MOUNTPOINT/$IMAGES_DIR"
 touch "$MOUNTPOINT/.gonet_usb" || true
 
 echo "Done."
@@ -236,10 +264,6 @@ echo "Commands installed:"
 echo "  mount-usb         -> mounts first removable USB drive to /media/pi/usb"
 echo "  umount-usb        -> safely unmounts /media/pi/usb"
 echo "  format-for-gonet  -> ERASES and formats inserted USB as exFAT + creates folders"
-echo
-echo "Hot-swap behavior:"
-echo "  Replugging a USB stick should auto-mount via udev."
-echo "  On boot, systemd will mount if a USB is inserted."
 echo
 echo "Check status:"
 echo "  systemctl status gonet-mount-usb.service"
