@@ -1,3 +1,96 @@
+======================================
+GONet Extensions for Remote Deployment
+======================================
+
+Installation
+============
+
+The remote GONet extensions can be installed directly on a camera using a
+single bootstrap script. The installer downloads the required files from
+GitHub and deploys them into the correct locations on the Raspberry Pi.
+
+No manual cloning of the repository is required.
+
+Quick install
+-------------
+
+Run the following commands on the GONet camera:
+
+::
+
+    curl -L -o setup_remote_gonet.sh \
+        https://raw.githubusercontent.com/gterreran/remote_gonet/main/setup_remote_gonet.sh
+
+    chmod +x setup_remote_gonet.sh
+
+    sudo ./setup_remote_gonet.sh
+
+What the installer does
+-----------------------
+
+The installer performs the following actions automatically:
+
+1. **Install camera software**
+
+   Downloads and installs the updated imaging code into::
+
+       /home/pi/Tools/Camera/
+
+   including::
+
+       gonet4.py (refactored with new features)
+       utils/
+
+2. **Install remote cron configuration**
+
+   Installs the remote cron backup file::
+
+       /home/pi/Tools/Crontab/CronRemoteBackup.txt
+
+   This cron configuration is used by the remote control mode.
+
+3. **Apply system patches**
+
+   Two system patches are applied:
+
+   - ``patch_usb_mount.sh``  
+     Installs the flexible USB auto-mount system for flash drives.
+
+   - ``patch_remote_bootup.sh``  
+     Modifies ``/etc/rc.local`` so the camera loads the remote cron
+     configuration at boot.
+
+4. **Install the remote camera web interface**
+
+   Replaces the default camera webpage with the simplified remote interface::
+
+       /home/pi/Tools/Web/camera/index.php
+
+   The previous file is automatically backed up.
+
+Result
+------
+
+After installation:
+
+- the camera software is updated
+- the remote cron configuration is installed
+- USB flash drives are automatically mounted
+- the remote camera control webpage is installed
+
+The system will continue operating normally and will use the new remote
+configuration on the next reboot.
+
+Updating
+--------
+
+To update the installation, simply run the installer again. Existing files
+will be replaced and patches re-applied if necessary.
+
+
+File descriptions and refactoring details
+=========================================
+
 Refactoring of original ``gonet4.py``
 -------------------------------------
 
