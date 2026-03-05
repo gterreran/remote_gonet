@@ -326,56 +326,50 @@ The legacy configuration file format remains compatible:
 
    shutter_speed = 1000000,3000000,6000000
 
-Sun gate (daylight skip) with self-maintained twilight cache
-------------------------------------------------------------
+Sun gate (daylight skip) based on Sun altitude
+----------------------------------------------
 
-The new *sun gate* feature allows ``gonet4.py`` to skip imaging during daytime
+The *sun gate* feature allows ``gonet4.py`` to skip imaging during daytime
 while preserving the "fail-open" philosophy (it is better to take images than to
 miss them).
 
-Unlike the original prototype (which relied on a separate cron job to precompute
-Sun events), the current implementation is fully self-contained in
-``utils/sun_gate.py``:
+The current implementation is intentionally simple: the decision is based
+directly on the **altitude of the Sun** at the camera's GPS location.
 
-- ``gonet4.py`` calls the gate once per run (when GPS is OK and ``--sun-gate`` is enabled).
-- The gate maintains a small JSON cache of twilight times on demand (no extra cron job).
-- The decision is made using twilight timestamps for *yesterday / today / tomorrow* in UTC.
+Unlike earlier prototypes, there is:
+
+- no twilight cache
+- no JSON files
+- no multi-day sunrise/sunset calculations
+- no time window logic
+
+Instead, the gate simply computes the Sun's altitude for the current time and
+compares it to a configurable threshold.
 
 Where it lives
 ^^^^^^^^^^^^^^
 
 - Module: ``utils/sun_gate.py``
-- JSON cache (persistent; *not* wiped by gonet4.py)::
-  
-    /home/pi/Tools/Sun/sun_windows.json
 
-Why a JSON cache at all?
-^^^^^^^^^^^^^^^^^^^^^^^^
-
-Astral computations are cheap, but the cache provides two practical benefits:
-
-- The gate logic can rely on a stable, inspectable artifact (easy to debug).
-- The gate can handle UTC date-boundary edge cases cleanly by always storing
-  three days of twilight events.
-
-The cache is tiny and only rebuilt when needed.
+The module contains a single public decision function used by ``gonet4.py``.
 
 How gonet4.py uses it
 ^^^^^^^^^^^^^^^^^^^^^
 
-``gonet4.py`` only runs the sun gate when:
+``gonet4.py`` runs the sun gate when:
 
 - a reliable GPS fix was acquired (``fix.ok``), and
-- ``--sun-gate`` is passed.
+- ``--sun-gate`` is passed on the command line.
 
-The GPS fix is then passed into ``should_image_now()`` so the gate never needs
-to re-fetch GPS data and can trust that the coordinates have already been
-validated by the main script.
+The GPS fix is passed directly into ``should_image_now()`` so the gate never
+needs to re-fetch GPS data and can rely on coordinates already validated by
+the main script.
 
 Typical call pattern (simplified)::
 
   if fix.ok and args.sun_gate:
       from utils.sun_gate import should_image_now
+
       if not should_image_now(fix=fix, logger=logger):
           logger.info("Sun gate: skip imaging (daytime)")
           set_status("SunUp")
@@ -384,66 +378,52 @@ Typical call pattern (simplified)::
 Sun gate decision logic
 ^^^^^^^^^^^^^^^^^^^^^^^
 
-The cache stores twilight event timestamps for three UTC dates under
-``twilights`` (a list of three "rows"):
+The gate computes the Sun's altitude angle (degrees above the horizon)
+using the Astral library:
 
-- yesterday (UTC)
-- today (UTC)
-- tomorrow (UTC)
+- Positive altitude → Sun above horizon
+- Negative altitude → Sun below horizon
 
-Rather than trying to guess which row corresponds to "today", the gate:
+The imaging rule is simply:
 
-1) Extracts candidate START events across all rows (e.g. ``sunset.civil``).
-2) Extracts candidate END events across all rows (e.g. ``sunrise.nautical``).
-3) Applies configured offsets (``START.offset`` and ``END.offset``).
-4) Sorts candidates chronologically.
-5) Chooses the window surrounding "now":
+::
 
-   - ``start`` = latest START time ``<= now``
-   - ``end``   = earliest END time  ``> start``
+    if sun_altitude <= limit:
+        IMAGE
+    else:
+        SKIP
 
-6) If ``now`` is within ``[start, end)``, imaging is allowed; otherwise the run is skipped.
+Typical reference values are:
 
-The default gate window is defined in ``utils/sun_gate.py`` as::
+======================  =========================
+Sun altitude (deg)     Condition
+======================  =========================
+0                      geometric sunrise/sunset
+-6                     civil twilight
+-12                    nautical twilight
+-18                    astronomical twilight
+======================  =========================
 
-  START = SunEvent("sunset",  "civil",    offset=-1 hour)
-  END   = SunEvent("sunrise", "nautical", offset=+2 hours)
-
-This effectively expands the night window slightly on both ends to be conservative.
+Using a negative threshold allows the gate to define "night" in a physically
+meaningful way without computing explicit sunrise/sunset times.
 
 Fail-open philosophy
 ^^^^^^^^^^^^^^^^^^^^
 
-The gate is designed for remote deployment, so it is intentionally *fail-open*:
+The gate is designed for remote deployment, so it intentionally fails open.
 
-- If the JSON is missing/unreadable, return ``True`` (image).
-- If the window cannot be computed reliably, return ``True`` (image).
-- If any unexpected parsing/logic error occurs, return ``True`` (image).
+If anything unexpected occurs, imaging is allowed.
 
-This ensures that a bug or missing dependency cannot silently suppress data acquisition.
+Examples include:
 
-JSON cache maintenance (no cron required)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+- GPS fix not available
+- Astral computation failure
+- unexpected runtime errors
 
-``utils/sun_gate.py`` maintains ``sun_windows.json`` automatically via
-``ensure_sun_windows_json()``.
+In those cases the function returns ``True`` (image).
 
-Rebuild conditions
-""""""""""""""""""
-
-The cache is rebuilt if either of the following is true:
-
-- The JSON is missing or stale (older than ``STALE_AFTER_HOURS``).
-- The JSON exists, but the cached ``site`` coordinates differ too much from the
-  current GPS fix (distance > ``MAX_SITE_DRIFT_KM``).
-
-Defaults (editable near the top of ``utils/sun_gate.py``)::
-
-  STALE_AFTER_HOURS = 12
-  MAX_SITE_DRIFT_KM = 25.0
-
-The distance check uses a simple haversine calculation. This guards against
-accidentally re-using a cache generated at a different deployment site.
+This guarantees that a software error cannot silently suppress
+data acquisition.
 
 Logging
 ^^^^^^^
@@ -553,3 +533,126 @@ GONet image (~18MB) is approximately 4.7-5.0 MB/s, which translates to about 4
 seconds per image. Considering imaging runs on cronjob, keepi in minde the
 extra time taken for copying and verifying images to the flash drive when
 scheduling runs.
+
+Patch for USB Flash Drive Auto-Mount and Formatting
+===================================================
+
+To support storing images on a flash drive, the repository provides a patch
+that installs a small USB auto-mount system. This system ensures that
+**any inserted flash drive is mounted at a predictable location** and that
+the imaging pipeline can write to it without requiring manual intervention.
+
+The patch also installs a convenience command that formats a flash drive with
+the recommended filesystem and prepares the directory structure expected by
+``gonet4.py``.
+
+Why This Is Needed
+------------------
+
+Mounting USB drives on Linux systems can be surprisingly inconsistent. Several
+issues must be handled in order for the GONet imaging pipeline to interact
+reliably with removable storage:
+
+1. **Unpredictable mount locations**
+
+   By default, removable drives may be mounted at paths such as::
+
+       /media/pi/<LABEL>
+       /run/media/pi/<LABEL>
+
+   These locations depend on the drive label and the desktop environment.
+   Since the camera runs in a headless environment without a graphical session,
+   automatic mounting may not happen at all.
+
+   The patch ensures that the flash drive is always mounted at::
+
+       /media/pi/usb
+
+   which provides a stable path that the imaging software can rely on.
+
+2. **Filesystem permission issues**
+
+   Most USB flash drives are formatted using FAT32, exFAT, or NTFS so that they
+   are compatible with Windows and macOS. These filesystems **do not support
+   traditional Unix ownership and permissions**.
+
+   When mounted with default Linux settings, they often appear owned by ``root``::
+
+       drwxr-xr-x root root /media/pi/usb
+
+   In this case the user ``pi`` (which runs the camera software) cannot create
+   files or directories on the drive, causing errors such as::
+
+       PermissionError: [Errno 13] Permission denied
+
+   The patch solves this by mounting the filesystem with explicit options::
+
+       uid=pi,gid=pi,umask=0002
+
+   This makes the filesystem appear writable by the ``pi`` user while preserving
+   compatibility with non-Unix filesystems.
+
+3. **Hot-plug support**
+
+   The camera may remain powered while flash drives are inserted or removed.
+   Without additional configuration, the system would not automatically mount a
+   newly inserted device.
+
+   The patch installs a **udev rule** that triggers a systemd service whenever a
+   USB storage partition appears. This allows newly inserted drives to be
+   mounted automatically without rebooting the camera.
+
+Filesystem Choice
+-----------------
+
+The recommended filesystem for GONet flash drives is **exFAT**.
+
+Reasons for choosing exFAT:
+
+* Compatible with **Linux, Windows, and macOS**
+* No 4 GB file size limit (unlike FAT32)
+* Widely supported on modern operating systems
+* Suitable for large image datasets
+
+Although Linux filesystems such as ``ext4`` would provide better permission
+handling and robustness, they cannot be read natively by Windows or macOS
+systems, which makes them impractical for portable storage.
+
+To simplify preparation of new flash drives, the patch installs the command::
+
+    format-for-gonet
+
+This command:
+
+* identifies the inserted removable USB drive
+* formats it as **exFAT**
+* assigns a filesystem label
+* creates the expected GONet directory structure
+
+Installed Commands
+------------------
+
+The patch installs the following convenience commands:
+
+``mount-usb``
+    Mount the first detected removable USB drive at ``/media/pi/usb``.
+
+``umount-usb``
+    Safely unmount the USB drive after flushing pending writes.
+
+``format-for-gonet``
+    Erase and format the currently inserted USB drive as exFAT and create the
+    directory structure required by the imaging pipeline.
+
+Automatic Mounting
+------------------
+
+Two mechanisms ensure that flash drives are mounted automatically:
+
+* **Systemd service** – mounts a drive at system startup if one is already
+  inserted.
+* **udev rule** – triggers the mount service whenever a USB storage partition
+  is connected.
+
+Together these mechanisms allow flash drives to be swapped freely while the
+camera is powered on or off.
