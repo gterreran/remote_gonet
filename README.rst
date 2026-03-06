@@ -7,26 +7,20 @@ software, designed to support **remote deployment** and **unattended operation**
 
 Table of Contents
 =================
-- :ref:`installation`
 
-    - :ref:`quick_install`
-    - :ref:`installer_actions`
+- `Installation <#installation>`__
+  - `Quick install <#quick-install>`__
+  - `What the installer does <#what-the-installer-does>`__
+- `File descriptions and refactoring details <#file-descriptions-and-refactoring-details>`__
+  - `Refactoring of original gonet4.py <#refactoring-of-original-gonet4py>`__
+  - `New features <#new-features>`__
+    - `Multiple exposure times <#multiple-exposure-times>`__
+    - `Sun gate (daylight skip) based on Sun altitude <#sun-gate-daylight-skip-based-on-sun-altitude>`__
+    - `Flash drive image copying <#flash-drive-image-copying>`__
+  - `Patch for USB Flash Drive Auto-Mount and Formatting <#patch-for-usb-flash-drive-auto-mount-and-formatting>`__
+  - `Boot Configuration Patch <#boot-configuration-patch>`__
+  - `Other files included in the repository <#other-files-included-in-the-repository>`__
 
-- :ref:`file_descriptions`
-
-    - :ref:`refactoring`
-    - :ref:`new_features`
-
-        - :ref:`multiple_exposure_times`
-        - :ref:`sun_gate`
-        - :ref:`flash_drive_copy`
-
-    - :ref:`USB_patch`
-    - :ref:`boot_patch`
-    - :ref:`extra`
-
-
-.. _installation:
 Installation
 ============
 
@@ -36,7 +30,6 @@ GitHub and deploys them into the correct locations on the Raspberry Pi.
 
 No manual cloning of the repository is required.
 
-.. _quick_install:
 Quick install
 -------------
 
@@ -51,7 +44,6 @@ Run the following commands on the GONet camera:
 
     sudo ./setup_remote_gonet.sh
 
-.. _installer_actions:
 What the installer does
 -----------------------
 
@@ -64,7 +56,7 @@ The installer performs the following actions automatically:
        astral
 
    The Astral library is used by the **sun gate** feature to compute
-   the Sun's altitude based on GPS coordinates and time, without 
+   the Sun's altitude based on GPS coordinates and time, without
    relying on internet access.
 
 2. **Install camera software**
@@ -90,10 +82,10 @@ The installer performs the following actions automatically:
 
    Two system patches are applied:
 
-   - ``patch_usb_mount.sh``  
+   - ``patch_usb_mount.sh``
      Installs the flexible USB auto-mount system for flash drives.
 
-   - ``patch_remote_bootup.sh``  
+   - ``patch_remote_bootup.sh``
      Modifies ``/etc/rc.local`` so the camera loads the remote cron
      configuration at boot.
 
@@ -120,11 +112,9 @@ After installation:
 The system will continue operating normally and will use the new remote
 configuration on the next reboot.
 
-.. _file_descriptions:
 File descriptions and refactoring details
 =========================================
 
-.. _refactoring:
 Refactoring of original ``gonet4.py``
 -------------------------------------
 
@@ -223,14 +213,14 @@ Module breakdown (new)
     - canonical ``Path`` constants (``SCRATCH_DIR``, ``IMAGE_DIR``, ``THUMBS_DIR``)
     - ``ensure_dirs(...)`` and ``recover_scratch_leftovers(...)``
     - ``version_check()`` and ``cap_check()``
-    - ``check_free_space(...)`` now look for a certain amount of free space in bytes
-      (defined as a constnt) rather than a percentage.
+    - ``check_free_space(...)`` now looks for a certain amount of free space in bytes
+      (defined as a constant) rather than a percentage.
 
 Modernization changes (mechanical refactor)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Argparse instead of ``sys.argv``
-"""""""""""""""""""""""""""""""
+""""""""""""""""""""""""""""""""
 
 Legacy behavior:
     ``gonet4.py`` treated ``sys.argv[1]`` as either a config filepath or the magic word
@@ -259,7 +249,7 @@ Net result:
     Less error-prone path manipulation, cleaner logs, and simpler file operations.
 
 Logging improvements and ``--quiet``
-"""""""""""""""""""""""""""""""""""
+""""""""""""""""""""""""""""""""""""
 
 Legacy behavior:
     - print-based console output
@@ -287,7 +277,7 @@ New behavior:
     as a recovery event.
 
 Overlay banner creation moved out of main script
-"""""""""""""""""""""""""""""""""""""""""""""""
+""""""""""""""""""""""""""""""""""""""""""""""""
 
 Legacy behavior:
     One ``foreground.jpeg`` was created once per run, so the overlay timestamp could lag and was
@@ -298,8 +288,8 @@ New behavior:
     - A unique overlay banner is created per image (or per capture record), ensuring the timestamp
       updates and metadata assembly is centralized.
 
-Includin UTC timestamp in EXIF data
-"""""""""""""""""""""""""""""""""""
+Including UTC timestamp in EXIF data
+""""""""""""""""""""""""""""""""""""
 
 Legacy behavior:
     The original script did not include the UTC timestamp in the EXIF data.
@@ -326,7 +316,6 @@ bytes and decide if the image was saturated. This was removed in the refactor be
 If saturation diagnostics are needed in the future, they should live in an offline analysis tool
 (or be implemented as an optional, explicitly-enabled mode).
 
-.. new_features:
 New features
 ------------
 
@@ -334,7 +323,6 @@ In addition to the structural refactoring described above, several new
 capabilities were introduced to improve operational flexibility for remote
 deployments and long-term unattended operation.
 
-.. multiple_exposure_times:
 Multiple exposure times
 ^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -355,7 +343,7 @@ Example:
 
    gonet4.py --shutter-speed 1000000,3000000,6000000
 
-In this example 1,3 and 6 seconds exposures will be captured.
+In this example 1, 3 and 6 second exposures will be captured.
 
 Now, for each exposure value, the script captures ``number_of_images`` frames.
 Therefore the total number of images produced in a run is:
@@ -373,7 +361,6 @@ The legacy configuration file format remains compatible:
 
    shutter_speed = 1000000,3000000,6000000
 
-.. sun_gate:
 Sun gate (daylight skip) based on Sun altitude
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -394,7 +381,7 @@ The sun gate is implemented in the new module ``utils/sun_gate.py`` and
 - ``--sun-gate`` is passed on the command line.
 
 The gate computes the Sun's altitude angle (degrees above the horizon)
-using the `astral <https://astral.readthedocs.io/en/latest/>`_ library:
+using the `astral documentation <https://astral.readthedocs.io/en/latest/>`__.
 
 The gate is designed for remote deployment, so it intentionally fails open:
 if anything unexpected occurs, imaging is allowed.
@@ -415,7 +402,6 @@ function returns ``False`` (skip), and the script logs the decision and moves
 on without capturing images. In addition, the script updates the status
 marker to ``SunUp``, so that a clear status is available for monitoring.
 
-.. flash_drive_copy:
 Flash drive image copying
 ^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -496,27 +482,26 @@ This allows the system to operate normally even when the flash drive is removed
 or replaced.
 
 Speed considerations
-"""""""""""""""""""
+""""""""""""""""""""
 
-From benchmarks tests, we found that the average speed of copying and verifying a
-GONet image (~18MB) is approximately 4.7-5.0 MB/s, which translates to about 4
-seconds per image. Considering imaging runs on cronjob, keep in mind the extra
+From benchmark tests, we found that the average speed of copying and verifying a
+GONet image (~18 MB) is approximately 4.7-5.0 MB/s, which translates to about 4
+seconds per image. Considering imaging runs on cron, keep in mind the extra
 time taken for copying and verifying images to the flash drive when scheduling
 runs.
 
-.. USB_patch:
 Patch for USB Flash Drive Auto-Mount and Formatting
 ===================================================
 
 To support storing images on a flash drive, the repository provides a patch
-that installs a small USB auto-mount system. 
+that installs a small USB auto-mount system.
 
 This patch is implemented in the script::
 
     patches/patch_usb_mount.sh
 
 This system ensures that **any inserted flash drive is mounted at a
-predictable location** and thatthe imaging pipeline can write to it without
+predictable location** and that the imaging pipeline can write to it without
 requiring manual intervention.
 
 The patch also installs a convenience command that formats a flash drive with
@@ -590,10 +575,10 @@ The recommended filesystem for GONet flash drives is **exFAT**.
 
 Reasons for choosing exFAT:
 
-* Compatible with **Linux, Windows, and macOS**
-* No 4 GB file size limit (unlike FAT32)
-* Widely supported on modern operating systems
-* Suitable for large image datasets
+- Compatible with **Linux, Windows, and macOS**
+- No 4 GB file size limit (unlike FAT32)
+- Widely supported on modern operating systems
+- Suitable for large image datasets
 
 Although Linux filesystems such as ``ext4`` would provide better permission
 handling and robustness, they cannot be read natively by Windows or macOS
@@ -605,10 +590,10 @@ To simplify preparation of new flash drives, the patch installs the command::
 
 This command:
 
-* identifies the inserted removable USB drive
-* formats it as **exFAT**
-* assigns a filesystem label
-* creates the expected GONet directory structure
+- identifies the inserted removable USB drive
+- formats it as **exFAT**
+- assigns a filesystem label
+- creates the expected GONet directory structure
 
 Installed Commands
 ------------------
@@ -629,17 +614,16 @@ Automatic Mounting at Startup
 -----------------------------
 
 We also configure the system to automatically mount a flash drive at startup
-if one is already inserted. This is achieved through a **Systemd service**
+if one is already inserted. This is achieved through a **systemd service**
 that runs at boot and checks for the presence of a USB drive, mounting it if
 found.
 
-This is particularly useful for remote deployments, as it allows the freely
-swap of flash drive while the camera is powered down, without requiring manual
+This is particularly useful for remote deployments, as it allows the free
+swap of flash drives while the camera is powered down, without requiring manual
 mounting after each reboot.
 
-.. boot_patch:
 Boot Configuration Patch
-===============================
+========================
 
 The remote installation modifies the system boot behavior so that the camera
 starts using the **remote** cron configuration instead of the default one.
@@ -655,7 +639,7 @@ The patch modifies the Raspberry Pi boot script::
 A timestamped backup of the original file is created automatically before any
 changes are applied.
 
-The patch applies two modifications to to ``/etc/rc.local``.
+The patch applies two modifications to ``/etc/rc.local``.
 
 Load remote cron configuration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -685,8 +669,6 @@ Patched behavior::
 This status file indicates that the camera is operating in **remote cron
 mode**.
 
-.. extra:
-
 Other files included in the repository
 --------------------------------------
 
@@ -694,9 +676,9 @@ In addition to the refactored ``gonet4.py`` and the patches, the repository
 includes the following files:
 
 - ``webpages/remote_camera_index.php``: this is the simplified version of
-    the camera control webpage, which is installed by the setup script. All
-    unnecessary modes are removed, leaving only the **remote** mode, and the
-    legacy **default** mode (i.e. 5 6s images every 5 minutes, no sun gate,
-    no flash drive copy).
+  the camera control webpage, which is installed by the setup script. All
+  unnecessary modes are removed, leaving only the **remote** mode, and the
+  legacy **default** mode (i.e. 5 6s images every 5 minutes, no sun gate,
+  no flash drive copy).
 - ``cron/CronRemoteBackup.txt``: this is the cron configuration used in remote mode,
-    which is installed by the setup script and loaded at boot by the boot patch.
+  which is installed by the setup script and loaded at boot by the boot patch.
