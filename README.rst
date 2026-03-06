@@ -2,6 +2,31 @@
 GONet Extensions for Remote Deployment
 ======================================
 
+This repository contains extensions and refactorings of the original GONet camera
+software, designed to support **remote deployment** and **unattended operation**.
+
+Table of Contents
+=================
+- :ref:`installation`
+
+    - :ref:`quick_install`
+    - :ref:`installer_actions`
+
+- :ref:`file_descriptions`
+
+    - :ref:`refactoring`
+    - :ref:`new_features`
+
+        - :ref:`multiple_exposure_times`
+        - :ref:`sun_gate`
+        - :ref:`flash_drive_copy`
+
+    - :ref:`USB_patch`
+    - :ref:`boot_patch`
+    - :ref:`extra`
+
+
+.. _installation:
 Installation
 ============
 
@@ -11,6 +36,7 @@ GitHub and deploys them into the correct locations on the Raspberry Pi.
 
 No manual cloning of the repository is required.
 
+.. _quick_install:
 Quick install
 -------------
 
@@ -25,12 +51,23 @@ Run the following commands on the GONet camera:
 
     sudo ./setup_remote_gonet.sh
 
+.. _installer_actions:
 What the installer does
 -----------------------
 
 The installer performs the following actions automatically:
 
-1. **Install camera software**
+1. **Install Python dependency**
+
+   Installs the required Python package::
+
+       astral
+
+   The Astral library is used by the **sun gate** feature to compute
+   the Sun's altitude based on GPS coordinates and time, without 
+   relying on internet access.
+
+2. **Install camera software**
 
    Downloads and installs the updated imaging code into::
 
@@ -41,7 +78,7 @@ The installer performs the following actions automatically:
        gonet4.py (refactored with new features)
        utils/
 
-2. **Install remote cron configuration**
+3. **Install remote cron configuration**
 
    Installs the remote cron backup file::
 
@@ -49,7 +86,7 @@ The installer performs the following actions automatically:
 
    This cron configuration is used by the remote control mode.
 
-3. **Apply system patches**
+4. **Apply system patches**
 
    Two system patches are applied:
 
@@ -60,7 +97,7 @@ The installer performs the following actions automatically:
      Modifies ``/etc/rc.local`` so the camera loads the remote cron
      configuration at boot.
 
-4. **Install the remote camera web interface**
+5. **Install the slimmed down remote camera web interface**
 
    Replaces the default camera webpage with the simplified remote interface::
 
@@ -69,28 +106,25 @@ The installer performs the following actions automatically:
    The previous file is automatically backed up.
 
 Result
-------
+^^^^^^
 
 After installation:
 
 - the camera software is updated
+- required Python dependencies are installed
 - the remote cron configuration is installed
+- the start up script is patched to load the remote cron configuration
 - USB flash drives are automatically mounted
-- the remote camera control webpage is installed
+- the slimmed down remote camera control webpage is installed
 
 The system will continue operating normally and will use the new remote
 configuration on the next reboot.
 
-Updating
---------
-
-To update the installation, simply run the installer again. Existing files
-will be replaced and patches re-applied if necessary.
-
-
+.. _file_descriptions:
 File descriptions and refactoring details
 =========================================
 
+.. _refactoring:
 Refactoring of original ``gonet4.py``
 -------------------------------------
 
@@ -109,7 +143,6 @@ Old (legacy script)
     - String-based file paths
     - Inline GPS acquisition logic
     - Inline EXIF + overlay formatting
-    - Hard-coded Bayer tail size (magic number)
     - ``print`` statements and manual log truncation
     - Post-processing scanned *all* files in scratch
     - Saturation check using incorrect byte interpretation
@@ -121,42 +154,12 @@ New (refactored architecture)
     - ``pathlib.Path`` for filesystem operations
     - GPS acquisition wrapped in a safe helper returning structured results
     - Centralized metadata + EXIF construction
-    - Automatic Bayer tail detection using JPEG EOI marker
     - Python logging with rotating log files
     - Post-processing limited to images captured in the current run
     - Saturation check removed (incorrect and computationally expensive)
 
-Overview
-^^^^^^^^
-
-The original ``gonet4.py`` was a single, monolithic script that mixed together:
-
-- configuration parsing (``sys.argv`` + manual prompts + key=value file parsing)
-- GPS acquisition (side-effectful import of ``FetchGPS``)
-- status markers (shelling out to ``rm -rf`` + ``touch``)
-- directory setup and scratch recovery
-- camera capture loop (PiCamera setup + EXIF tags)
-- post-processing pipeline (overlay banner + EXIF preservation + Bayer append + thumbnail)
-- log file management (manual “keep last N lines” rotation)
-
-This refactor keeps the *same operational behavior* (cron-safe, fail-open) while turning
-``gonet4.py`` into a readable orchestration layer and moving specific responsibilities
-into dedicated modules.
-
-High-level restructuring
-^^^^^^^^^^^^^^^^^^^^^^^^
-
-The new ``gonet4.py`` is now mostly an “orchestrator”:
-
-- resolve configuration
-- acquire GPS (fail-open)
-- perform setup checks and scratch recovery
-- capture images to scratch
-- post-process only the images captured in this run
-- write structured logs and status markers
-- optional post-run actions (e.g. flash drive migration, sun gate)
-
-All heavy logic is moved into ``utils/`` modules with clear, testable entrypoints.
+The new ``gonet4.py`` is now mostly an “orchestrator”, while all heavy
+logic is moved into ``utils/`` modules with clear, testable entrypoints.
 
 Module breakdown (new)
 ^^^^^^^^^^^^^^^^^^^^^^
@@ -189,6 +192,7 @@ Module breakdown (new)
     - Overlay banner text formatting
     - EXIF GPS formatting helpers
     - Camera EXIF tag dictionary assembly
+    - Added UTC timestamp in EXIF data (legacy script only had it in the filename and overlay text)
     - Banner rendering (PIL) via ``write_overlay_banner(...)``
 
     This replaces scattered formatting logic and ensures consistent overlay/EXIF content.
@@ -204,10 +208,10 @@ Module breakdown (new)
     - Optionally delete scratch file
 
     This replaces the legacy post-processing block that iterated over *all* scratch files,
-    used hard-coded tail sizes, and mixed shell commands with image logic.
+    and mixed shell commands with image logic.
 
 ``utils.logging``
-    Replaces manual log file truncation with Python’s rotating log handler:
+    Replaces manual log file truncation with Python's rotating log handler:
 
     - Status markers preserved (``/home/pi/Tools/Status`` wipe + touch)
     - Rotating log file at ``/home/pi/Tools/Camera/gonet.log`` via ``RotatingFileHandler``
@@ -219,7 +223,8 @@ Module breakdown (new)
     - canonical ``Path`` constants (``SCRATCH_DIR``, ``IMAGE_DIR``, ``THUMBS_DIR``)
     - ``ensure_dirs(...)`` and ``recover_scratch_leftovers(...)``
     - ``version_check()`` and ``cap_check()``
-    - ``check_free_space(...)`` with legacy “percent free” behavior
+    - ``check_free_space(...)`` now look for a certain amount of free space in bytes
+      (defined as a constnt) rather than a percentage.
 
 Modernization changes (mechanical refactor)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -253,16 +258,6 @@ New behavior:
 Net result:
     Less error-prone path manipulation, cleaner logs, and simpler file operations.
 
-Separation of concerns and “cron-safe” fail-open philosophy
-""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-
-The refactor preserves the field philosophy: *it is better to take images than to crash*.
-
-- GPS acquisition returns a result object and never raises.
-- Scratch cleanup is best-effort and noisy in logs, but does not abort imaging.
-- Disk-full detection returns early and disables the crontab (legacy behavior preserved).
-- Errors in optional features are handled so imaging can proceed (fail-open).
-
 Logging improvements and ``--quiet``
 """""""""""""""""""""""""""""""""""
 
@@ -283,7 +278,7 @@ Post-processing only what was captured in this run
 
 Legacy behavior:
     Post-processing iterated through all ``.jpg`` in scratch at the end of the run. This mixed
-    recovery leftovers with “this run’s” images and could lead to confusing behavior if scratch
+    recovery leftovers with “this run's” images and could lead to confusing behavior if scratch
     contained leftover files.
 
 New behavior:
@@ -331,42 +326,7 @@ bytes and decide if the image was saturated. This was removed in the refactor be
 If saturation diagnostics are needed in the future, they should live in an offline analysis tool
 (or be implemented as an optional, explicitly-enabled mode).
 
-Bayer tail handling: from hard-coded magic number to robust detection
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-Legacy behavior:
-    The script appended a hard-coded number of bytes from the scratch file
-    (``tail -c 18711040``) to the output JPEG, assuming the Bayer tail is always that size.
-
-This is brittle because the Bayer tail size can vary with camera model, sensor mode, resolution,
-firmware, or PiCamera behavior.
-
-New behavior:
-    ``utils.imaging_pipeline`` detects the Bayer tail by parsing the JPEG structure:
-
-    - locate the final JPEG end-of-image marker (EOI = ``0xFF 0xD9``)
-    - treat everything after EOI as “tail”
-    - append the entire tail to the composited output JPEG
-
-This removes the “magic number” and makes the pipeline resilient to tail size changes while
-preserving the legacy artifact format expected by downstream tooling.
-
-(Additionally, the module includes a best-effort detection of the common ``BRCM`` header region
-to estimate the payload size, while still appending the full tail for compatibility.)
-
-Preserved legacy behaviors (intentional)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-Even though the implementation is modernized, several operational behaviors were intentionally preserved:
-
-- Status marker directory semantics (wipe + touch a single marker file).
-- PiCamera ``CAPTURE_TIMEOUT`` patch to support long exposures.
-- Scratch crash recovery:
-  - delete zero-length files
-  - move leftover ``.jpg`` from scratch into ``IMAGE_DIR`` (fail-open “save the data” behavior)
-- Version and lens-cap status are still derived from the same filesystem conventions.
-- Filename format and UTC-based naming remain consistent with the legacy script.
-
+.. new_features:
 New features
 ------------
 
@@ -374,19 +334,20 @@ In addition to the structural refactoring described above, several new
 capabilities were introduced to improve operational flexibility for remote
 deployments and long-term unattended operation.
 
+.. multiple_exposure_times:
 Multiple exposure times
 ^^^^^^^^^^^^^^^^^^^^^^^
 
-The original ``gonet4.py`` supported only a **single shutter speed** per run,
-defined by the variable ``shutter_speed``. Each invocation of the script would
-capture ``number_of_images`` frames using that single exposure value.
+The original ``gonet4.py`` supported only a **single shutter speed** per run.
+Each invocation of the script would capture ``number_of_images`` frames using
+that single exposure value.
 
 The refactored system allows **multiple exposure times to be specified in a
 single run**.
 
 This is implemented through the configuration system in ``utils.config``.
 The ``shutter_speed`` parameter now accepts **a list of exposure times** rather
-than a single value.
+than a single value. The list is parsed from a comma-separated string.
 
 Example:
 
@@ -394,23 +355,16 @@ Example:
 
    gonet4.py --shutter-speed 1000000,3000000,6000000
 
-In this example:
+In this example 1,3 and 6 seconds exposures will be captured.
 
-- 1 second
-- 3 seconds
-- 6 seconds
-
-exposures will be captured.
-
-For each exposure value, the script captures ``number_of_images`` frames.
+Now, for each exposure value, the script captures ``number_of_images`` frames.
 Therefore the total number of images produced in a run is:
 
 .. code-block:: text
 
-   total_images = len(shutter_speed_list) × number_of_images
+   total_images = len(shutter_speed_list) x number_of_images
 
-This enables a simple **exposure bracketing strategy** that improves the chance
-of capturing useful data under varying sky brightness conditions without
+This enables a simple **exposure bracketing strategy** without
 requiring multiple cron jobs or configuration changes.
 
 The legacy configuration file format remains compatible:
@@ -419,93 +373,31 @@ The legacy configuration file format remains compatible:
 
    shutter_speed = 1000000,3000000,6000000
 
+.. sun_gate:
 Sun gate (daylight skip) based on Sun altitude
-----------------------------------------------
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 The *sun gate* feature allows ``gonet4.py`` to skip imaging during daytime
 while preserving the "fail-open" philosophy (it is better to take images than to
 miss them).
 
-The current implementation is intentionally simple: the decision is based
-directly on the **altitude of the Sun** at the camera's GPS location.
+The current implementation is intentionally simple: the gate simply computes
+the **Sun's altitude** for the current time and compares it to a configurable
+threshold. The check happens within the ``gonet4.py`` script, therefore
+it doesn't affect the cron scheduling and the script can still run at the same
+times regardless of sunrise/sunset.
 
-Unlike earlier prototypes, there is:
-
-- no twilight cache
-- no JSON files
-- no multi-day sunrise/sunset calculations
-- no time window logic
-
-Instead, the gate simply computes the Sun's altitude for the current time and
-compares it to a configurable threshold.
-
-Where it lives
-^^^^^^^^^^^^^^
-
-- Module: ``utils/sun_gate.py``
-
-The module contains a single public decision function used by ``gonet4.py``.
-
-How gonet4.py uses it
-^^^^^^^^^^^^^^^^^^^^^
-
+The sun gate is implemented in the new module ``utils/sun_gate.py`` and
 ``gonet4.py`` runs the sun gate when:
 
 - a reliable GPS fix was acquired (``fix.ok``), and
 - ``--sun-gate`` is passed on the command line.
 
-The GPS fix is passed directly into ``should_image_now()`` so the gate never
-needs to re-fetch GPS data and can rely on coordinates already validated by
-the main script.
-
-Typical call pattern (simplified)::
-
-  if fix.ok and args.sun_gate:
-      from utils.sun_gate import should_image_now
-
-      if not should_image_now(fix=fix, logger=logger):
-          logger.info("Sun gate: skip imaging (daytime)")
-          set_status("SunUp")
-          return 0
-
-Sun gate decision logic
-^^^^^^^^^^^^^^^^^^^^^^^
-
 The gate computes the Sun's altitude angle (degrees above the horizon)
-using the Astral library:
+using the `astral <https://astral.readthedocs.io/en/latest/>`_ library:
 
-- Positive altitude → Sun above horizon
-- Negative altitude → Sun below horizon
-
-The imaging rule is simply:
-
-::
-
-    if sun_altitude <= limit:
-        IMAGE
-    else:
-        SKIP
-
-Typical reference values are:
-
-======================  =========================
-Sun altitude (deg)     Condition
-======================  =========================
-0                      geometric sunrise/sunset
--6                     civil twilight
--12                    nautical twilight
--18                    astronomical twilight
-======================  =========================
-
-Using a negative threshold allows the gate to define "night" in a physically
-meaningful way without computing explicit sunrise/sunset times.
-
-Fail-open philosophy
-^^^^^^^^^^^^^^^^^^^^
-
-The gate is designed for remote deployment, so it intentionally fails open.
-
-If anything unexpected occurs, imaging is allowed.
+The gate is designed for remote deployment, so it intentionally fails open:
+if anything unexpected occurs, imaging is allowed.
 
 Examples include:
 
@@ -518,33 +410,17 @@ In those cases the function returns ``True`` (image).
 This guarantees that a software error cannot silently suppress
 data acquisition.
 
-Logging
-^^^^^^^
+In case the Sun gate is active and the Sun is above the threshold, the
+function returns ``False`` (skip), and the script logs the decision and moves
+on without capturing images. In addition, the script updates the status
+marker to ``SunUp``, so that a clear status is available for monitoring.
 
-There is no separate "Sun" log file. The sun gate uses the ``gonet4.py`` logger:
-
-- When the cache is rebuilt, it logs an ``INFO`` message indicating the update
-  and the coordinates used.
-- Each run logs the computed ``start`` and ``end`` window and the resulting
-  decision (``IMAGE`` vs ``SKIP``).
-
-Optional CLI debugging
-^^^^^^^^^^^^^^^^^^^^^^
-
-``utils/sun_gate.py`` includes a small CLI entry point for quick manual testing
-(no cron required). Example::
-
-  python3 -m utils.sun_gate --lat 41.8781 --lon -87.6298 --gps-mode 3
-
-It prints ``IMAGE`` or ``SKIP`` and emits minimal console logs. In normal
-operation, ``gonet4.py`` passes its own logger and GPS fix.
-
+.. flash_drive_copy:
 Flash drive image copying
 ^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Remote stations can generate large volumes of image data over time. To simplify
-data retrieval and reduce SD card wear, the refactored system supports
-**automatic copying of images to an external USB flash drive**.
+To simplify data retrieval and reduce SD card wear, the refactored system
+supports **automatic copying of images to an external USB flash drive**.
 
 This feature is enabled using:
 
@@ -557,9 +433,10 @@ post-processing:
 
 1. Verify that a USB drive is mounted
 2. Confirm the presence of a marker file identifying the drive as valid
-3. Copy images to the flash drive
-4. Verify the copy
-5. Optionally delete the source file from the SD card
+3. Check that sufficient free space is available on the drive
+4. Copy images to the flash drive
+5. Verify the copy
+6. Optionally delete the source file from the SD card
 
 Only images **successfully processed during the current run** are considered for
 migration.
@@ -621,30 +498,38 @@ or replaced.
 Speed considerations
 """""""""""""""""""
 
-From benchmaks tests, I found that the average speed of copying and verifying a
+From benchmarks tests, we found that the average speed of copying and verifying a
 GONet image (~18MB) is approximately 4.7-5.0 MB/s, which translates to about 4
-seconds per image. Considering imaging runs on cronjob, keepi in minde the
-extra time taken for copying and verifying images to the flash drive when
-scheduling runs.
+seconds per image. Considering imaging runs on cronjob, keep in mind the extra
+time taken for copying and verifying images to the flash drive when scheduling
+runs.
 
+.. USB_patch:
 Patch for USB Flash Drive Auto-Mount and Formatting
 ===================================================
 
 To support storing images on a flash drive, the repository provides a patch
-that installs a small USB auto-mount system. This system ensures that
-**any inserted flash drive is mounted at a predictable location** and that
-the imaging pipeline can write to it without requiring manual intervention.
+that installs a small USB auto-mount system. 
+
+This patch is implemented in the script::
+
+    patches/patch_usb_mount.sh
+
+This system ensures that **any inserted flash drive is mounted at a
+predictable location** and thatthe imaging pipeline can write to it without
+requiring manual intervention.
 
 The patch also installs a convenience command that formats a flash drive with
 the recommended filesystem and prepares the directory structure expected by
 ``gonet4.py``.
 
-Why This Is Needed
-------------------
+Context and Motivation
+----------------------
 
-Mounting USB drives on Linux systems can be surprisingly inconsistent. Several
-issues must be handled in order for the GONet imaging pipeline to interact
-reliably with removable storage:
+Mounting USB drives on Linux systems can be surprisingly inconsistent, as
+proven by the extensive testing and debugging process that led to the current
+patch implementation. Several issues must be handled in order for the GONet
+imaging pipeline to interact reliably with removable storage:
 
 1. **Unpredictable mount locations**
 
@@ -695,6 +580,9 @@ reliably with removable storage:
    USB storage partition appears. This allows newly inserted drives to be
    mounted automatically without rebooting the camera.
 
+   Such hot-plug support is not essential for the imaging pipeline, but it
+   significantly improves usability.
+
 Filesystem Choice
 -----------------
 
@@ -737,15 +625,78 @@ The patch installs the following convenience commands:
     Erase and format the currently inserted USB drive as exFAT and create the
     directory structure required by the imaging pipeline.
 
-Automatic Mounting
-------------------
+Automatic Mounting at Startup
+-----------------------------
 
-Two mechanisms ensure that flash drives are mounted automatically:
+We also configure the system to automatically mount a flash drive at startup
+if one is already inserted. This is achieved through a **Systemd service**
+that runs at boot and checks for the presence of a USB drive, mounting it if
+found.
 
-* **Systemd service** – mounts a drive at system startup if one is already
-  inserted.
-* **udev rule** – triggers the mount service whenever a USB storage partition
-  is connected.
+This is particularly useful for remote deployments, as it allows the freely
+swap of flash drive while the camera is powered down, without requiring manual
+mounting after each reboot.
 
-Together these mechanisms allow flash drives to be swapped freely while the
-camera is powered on or off.
+.. boot_patch:
+Boot Configuration Patch
+===============================
+
+The remote installation modifies the system boot behavior so that the camera
+starts using the **remote** cron configuration instead of the default one.
+
+This change is implemented by the script::
+
+    patches/patch_remote_bootup.sh
+
+The patch modifies the Raspberry Pi boot script::
+
+    /etc/rc.local
+
+A timestamped backup of the original file is created automatically before any
+changes are applied.
+
+The patch applies two modifications to to ``/etc/rc.local``.
+
+Load remote cron configuration
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Original boot behavior::
+
+    su pi -c 'crontab /home/pi/Tools/Crontab/CronBackup.txt'
+
+Patched behavior::
+
+    su pi -c 'crontab /home/pi/Tools/Crontab/CronRemoteBackup.txt'
+
+This ensures that the camera loads the **remote cron schedule** rather than
+the default local configuration.
+
+Update cron status marker
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Original behavior::
+
+    su pi -c 'touch /home/pi/Tools/Crontab/status/Default'
+
+Patched behavior::
+
+    su pi -c 'touch /home/pi/Tools/Crontab/status/RemoteDefault'
+
+This status file indicates that the camera is operating in **remote cron
+mode**.
+
+.. extra:
+
+Other files included in the repository
+--------------------------------------
+
+In addition to the refactored ``gonet4.py`` and the patches, the repository
+includes the following files:
+
+- ``webpages/remote_camera_index.php``: this is the simplified version of
+    the camera control webpage, which is installed by the setup script. All
+    unnecessary modes are removed, leaving only the **remote** mode, and the
+    legacy **default** mode (i.e. 5 6s images every 5 minutes, no sun gate,
+    no flash drive copy).
+- ``cron/CronRemoteBackup.txt``: this is the cron configuration used in remote mode,
+    which is installed by the setup script and loaded at boot by the boot patch.

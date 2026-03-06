@@ -79,6 +79,6 @@ replace_line \
 replace_line \
   "$RC_LOCAL" \
   "su pi -c 'touch /home/pi/Tools/Crontab/status/Default'" \
-  "su pi -c 'touch /home/pi/Tools/Crontab/status/CronDefault'"
+  "su pi -c 'touch /home/pi/Tools/Crontab/status/RemoteDefault'"
 
 echo "==> Done. (backup: ${backup})"
