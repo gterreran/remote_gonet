@@ -17,11 +17,11 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
+from .setup import check_free_space
 
 
 USB_MOUNTPOINT = Path("/media/pi/usb")
@@ -61,6 +61,10 @@ def usb_available(*, logger: logging.Logger) -> bool:
     if not USB_MARKER.exists():
         logger.info("usb: marker missing: %s", USB_MARKER)
         return False
+    if not check_free_space(USB_MOUNTPOINT, logger=logger):
+        logger.info("usb: insufficient free space at: %s", USB_MOUNTPOINT)
+        return False
+
     return True
 
 

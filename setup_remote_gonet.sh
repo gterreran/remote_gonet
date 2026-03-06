@@ -18,6 +18,7 @@ set -euo pipefail
 # - runs patches/patch_remote_bootup.sh
 # - replaces /home/pi/Tools/Web/camera/index.php with webpages/remote_camera_index.php
 #   (backup saved alongside)
+# - installs Python dependency: astral
 # ----------------------------------------------------------------------
 
 # -----------------------------
@@ -70,6 +71,29 @@ echo "    raw_base: ${RAW_BASE}"
 echo "    workdir : ${WORKDIR}"
 
 need_cmd curl
+need_cmd python3
+
+# ----------------------------------------------------------------------
+# 0) Install Python deps (Astral)
+# ----------------------------------------------------------------------
+echo "==> Installing Python dependency: astral"
+
+# Ensure pip exists (many Pi images have it, but not all)
+if ! python3 -m pip --version >/dev/null 2>&1; then
+  echo "    pip not found for python3; installing python3-pip via apt"
+  sudo apt-get install -y python3-pip
+fi
+
+# Install Astral (system-wide because we're running under sudo)
+# -U: upgrade if already present
+# --no-cache-dir: reduce disk usage
+sudo python3 -m pip install -U --no-cache-dir astral
+
+# Sanity check (non-fatal)
+python3 - <<'PY' || true
+import astral
+print("astral version:", getattr(astral, "__version__", "UNKNOWN"))
+PY
 
 # ----------------------------------------------------------------------
 # 1) Install Camera code (src/ -> /home/pi/Tools/Camera/)

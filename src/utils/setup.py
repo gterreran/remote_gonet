@@ -1,48 +1,69 @@
+#!/usr/bin/env python3
+"""
+utils.setup
+===========
+
+Small setup + safety utilities used by gonet4.py:
+
+- Ensure required directories exist
+- Recover leftover scratch files (crash-safe)
+- Read "version" and "lens cap" status markers
+- Check filesystem free space before imaging
+
+Free-space policy
+-----------------
+We use a **minimum free-bytes threshold** (not percent) to avoid surprises on
+small/large filesystems.
+
+Default policy:
+    MIN_FREE_BYTES = 200 MiB
+
+`gonet4.py` should check:
+- the SD card ("/") always
+- the USB mount too **when --flashdrive-copy is enabled**
+"""
+
 from __future__ import annotations
 
 import logging
 import os
 from pathlib import Path
 
+
+# =============================================================================
+# Paths
+# =============================================================================
+
 SCRATCH_DIR = Path("/home/pi/Tools/Camera/scratch")
 IMAGE_DIR = Path("/home/pi/images")
 THUMBS_DIR = Path("/home/pi/_sfpg_data/thumb")
 
 VERSION_DIR = Path("/home/pi/Tools/Version")
-
 LENS_STATUS_DIR = Path("/home/pi/Tools/LensStatus/Status")
 
-DISK_FREE_THRESHOLD = 10.0
+MIN_FREE_BYTES: int = 200 * 1024 * 1024  # 200 MiB
 
-def ensure_dirs(
-    *,
-    logger: logging.Logger,
-) -> None:
+
+# =============================================================================
+# Directory setup
+# =============================================================================
+
+def ensure_dirs(*, logger: logging.Logger) -> None:
     """
     Ensure required directories exist.
-
-    Notes
-    -----
-    This isolates the directory-creation side effects from the main flow, and
-    reports what it did to the rotating log.
     """
     for d in (SCRATCH_DIR, IMAGE_DIR, THUMBS_DIR):
         if d.exists():
             if d.is_dir():
                 logger.info("dir exists: %s", d)
             else:
-                # Rare but important: a file exists where we need a directory.
-                # We do not attempt to fix automatically (fail-open, but noisy).
                 logger.error("path exists but is not a directory: %s", d)
         else:
             d.mkdir(parents=True, exist_ok=True)
             logger.info("created dir: %s", d)
 
 
-def recover_scratch_leftovers(
-    *,
-    logger: logging.Logger,
-) -> None:
+def recover_scratch_leftovers(*, logger: logging.Logger) -> None:
     """
     Crash-recovery step: clean scratch before a new run.
 
@@ -50,23 +71,13 @@ def recover_scratch_leftovers(
     ------------
     - Deletes zero-length files (likely incomplete/corrupt writes).
     - Moves leftover .jpg files from scratch -> IMAGE_DIR.
-
-    Why it exists
-    -------------
-    If the previous run crashed after capture but before post-processing, scratch
-    may contain valid images. We fail-open and move them so data is not lost.
-    These moved leftovers will *not* have the overlay/thumbs, consistent with
-    the legacy behavior you preserved.
-
-    Returns
-    -------
-    None
     """
-    zero_length_deleted: list[str] = []
-    leftovers_moved: list[str] = []
+    zero_length_deleted = 0
+    leftovers_moved = 0
 
     if not SCRATCH_DIR.exists():
         logger.warning("scratch dir does not exist yet (will be created later): %s", SCRATCH_DIR)
+        return
 
     # 1) Remove zero-length files
     for p in SCRATCH_DIR.iterdir():
@@ -74,10 +85,10 @@ def recover_scratch_leftovers(
             continue
         try:
             if p.stat().st_size == 0:
-                zero_length_deleted.append(p.name)
                 logger.warning("scratch recovery: deleting zero-length file: %s", p)
                 try:
                     p.unlink()
+                    zero_length_deleted += 1
                 except Exception:
                     logger.exception("scratch recovery: failed deleting: %s", p)
         except Exception:
@@ -89,81 +100,103 @@ def recover_scratch_leftovers(
             continue
 
         dst = IMAGE_DIR / p.name
-        leftovers_moved.append(p.name)
         logger.warning("scratch recovery: moving leftover jpg: %s -> %s", p, dst)
         try:
             p.rename(dst)
+            leftovers_moved += 1
         except Exception:
             logger.exception("scratch recovery: failed moving: %s -> %s", p, dst)
 
     if zero_length_deleted or leftovers_moved:
         logger.warning(
             "scratch recovery summary: deleted_zero_length=%d moved_leftovers=%d",
-            len(zero_length_deleted),
-            len(leftovers_moved),
+            zero_length_deleted,
+            leftovers_moved,
         )
     else:
         logger.info("scratch recovery: scratch clean (no leftovers)")
 
 
+# =============================================================================
+# Status markers
+# =============================================================================
+
 def version_check() -> str:
     """
-    Check for version file and log it.
-
-    Returns
-    -------
-    str        Version string from the version file, or "UNK" if unknown.
-    
+    Return version string from VERSION_DIR, or "UNK" if unknown.
     """
-    version = "UNK"
     try:
         version_files = list(VERSION_DIR.glob("*"))
         if version_files:
-            version = version_files[0].name
+            return version_files[0].name
     except Exception:
         pass
-
-    return version
+    return "UNK"
 
 
 def cap_check() -> str:
     """
-    Check for lens cap status and log it.
-
-    Returns
-    -------
-    str        Lens cap status, e.g. "On" or "Off". "UNK" if unknown.
-    
+    Return lens cap status from LENS_STATUS_DIR, or "UNK" if unknown.
     """
-    lenscap = "UNK"
     try:
-        cap = list(LENS_STATUS_DIR.glob("*"))
-        if cap:
-            lenscap = cap[0].name
+        caps = list(LENS_STATUS_DIR.glob("*"))
+        if caps:
+            return caps[0].name
     except Exception:
         pass
+    return "UNK"
 
-    return lenscap
-    
 
-def check_free_space(path: Path, logger: logging.Logger) -> bool:
+# =============================================================================
+# Disk space checks
+# =============================================================================
+
+def _format_bytes(n: int) -> str:
     """
-    Return 'percent free' as computed by the legacy code.
+    Human-readable bytes (MiB/GiB) for logs.
+    """
+    if n >= 1024**3:
+        return f"{n / (1024**3):.2f} GiB"
+    return f"{n / (1024**2):.1f} MiB"
+
+
+def check_free_space(
+    path: Path,
+    *,
+    logger: logging.Logger,
+) -> bool:
+    """
+    Check that the filesystem containing `path` has at least `min_free_bytes` available.
 
     Parameters
     ----------
     path
-        Path to filesystem to query.
+        Any path on the filesystem you want to check (e.g. Path("/") or Path("/media/pi/usb")).
+    logger
+        Logger for reporting.
 
     Returns
     -------
     bool
-        True if sufficient free space, False if low disk space.
-    logger
-        Logger for reporting disk space status.
+        True if sufficient space, False otherwise.
     """
-    disk = os.statvfs(str(path))
-    pct_free = (disk.f_bavail * 100.0) / disk.f_blocks
-    logger.info("disk pct_free=%.2f threshold=%.2f path=%s", pct_free, DISK_FREE_THRESHOLD, path)
-    return pct_free >= DISK_FREE_THRESHOLD
+    try:
+        st = os.statvfs(str(path))
+        free_bytes = int(st.f_bavail) * int(st.f_frsize)
+        total_bytes = int(st.f_blocks) * int(st.f_frsize)
+        pct_free = (free_bytes * 100.0 / total_bytes) if total_bytes > 0 else 0.0
 
+        logger.info(
+            "disk free path=%s free=%s (%.2f%%) required>=%s",
+            path,
+            _format_bytes(free_bytes),
+            pct_free,
+            _format_bytes(MIN_FREE_BYTES),
+        )
+
+        return free_bytes >= int(MIN_FREE_BYTES)
+
+    except Exception as e:
+        logger.exception("disk free check failed path=%s error=%r", path, e)
+        # Fail-open: do not block imaging because statvfs failed
+        return True
