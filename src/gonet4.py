@@ -228,7 +228,7 @@ def main() -> int:
         try:
             from utils.sun_gate import should_image_now
 
-            if not should_image_now():
+            if not should_image_now(fix=fix, logger=logger):
                 logger.info("Sun gate: skip imaging (daytime)")
                 set_status("SunUp")
                 return 0
